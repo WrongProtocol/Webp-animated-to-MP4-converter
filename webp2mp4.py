@@ -203,7 +203,7 @@ class WebpToMP4Converter:
                 )
                 
                 # Convert file
-                if self.webp_to_mp4(input_file, output_file):
+                if self.webp_to_mp4(input_file, output_file, fps=16):
                     successful += 1
                     self.log_debug(f"Successfully converted {current_file}")
                 else:
