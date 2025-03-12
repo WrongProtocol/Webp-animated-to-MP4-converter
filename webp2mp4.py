@@ -6,34 +6,28 @@ import numpy as np
 import os
 from pathlib import Path
 import threading
+import subprocess
 
 class WebpToMP4Converter:
     def __init__(self, root):
         self.root = root
-        self.root.title("WebP to MP4 Converter")
+        self.root.title("WebP to MP4 Converter with Frame Blending")
         self.root.geometry("800x600")
         
-        # File list
         self.files = []
-        
-        # Add new instance variables
         self.paused = False
         self.stopped = False
         self.conversion_thread = None
         
-        # Create main frame
         self.main_frame = ttk.Frame(root, padding="10")
         self.main_frame.pack(fill=tk.BOTH, expand=True)
         
-        # Create and configure grid
         self.main_frame.columnconfigure(0, weight=1)
         self.main_frame.rowconfigure(1, weight=1)
         
-        # Buttons frame
         self.btn_frame = ttk.Frame(self.main_frame)
         self.btn_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
         
-        # Add buttons
         ttk.Button(self.btn_frame, text="Add Files", command=self.add_files).pack(side=tk.LEFT, padx=5)
         ttk.Button(self.btn_frame, text="Remove Selected", command=self.remove_selected).pack(side=tk.LEFT, padx=5)
         ttk.Button(self.btn_frame, text="Clear All", command=self.clear_all).pack(side=tk.LEFT, padx=5)
@@ -45,7 +39,6 @@ class WebpToMP4Converter:
         self.stop_btn = ttk.Button(self.btn_frame, text="Stop", command=self.stop_conversion, state=tk.DISABLED)
         self.stop_btn.pack(side=tk.LEFT, padx=5)
         
-        # Files listbox with scrollbar
         self.files_frame = ttk.Frame(self.main_frame)
         self.files_frame.grid(row=1, column=0, sticky="nsew")
         
@@ -56,7 +49,6 @@ class WebpToMP4Converter:
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.listbox.configure(yscrollcommand=scrollbar.set)
         
-        # Progress frame
         self.progress_frame = ttk.Frame(self.main_frame)
         self.progress_frame.grid(row=2, column=0, sticky="ew", pady=(10, 0))
         
@@ -67,10 +59,8 @@ class WebpToMP4Converter:
         self.status_label = ttk.Label(self.progress_frame, text="Ready")
         self.status_label.pack()
         
-        # Output folder
         self.output_folder = None
         
-        # Add debug window
         self.debug_frame = ttk.LabelFrame(self.main_frame, text="Debug Log", padding="5")
         self.debug_frame.grid(row=3, column=0, sticky="nsew", pady=(10, 0))
         
@@ -81,15 +71,11 @@ class WebpToMP4Converter:
         debug_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.debug_text.configure(yscrollcommand=debug_scrollbar.set)
         
-        # Update grid configuration
-        self.main_frame.rowconfigure(1, weight=3)  # Files list gets more space
-        self.main_frame.rowconfigure(3, weight=1)  # Debug window gets less space
+        self.main_frame.rowconfigure(1, weight=3)
+        self.main_frame.rowconfigure(3, weight=1)
 
     def add_files(self):
-        files = filedialog.askopenfilenames(
-            filetypes=[("WebP files", "*.webp")],
-            title="Select WebP Files"
-        )
+        files = filedialog.askopenfilenames(filetypes=[("WebP files", "*.webp")], title="Select WebP Files")
         for file in files:
             if file not in self.files:
                 self.files.append(file)
@@ -110,30 +96,59 @@ class WebpToMP4Converter:
         if self.output_folder:
             self.status_label.config(text=f"Output folder: {self.output_folder}")
 
-    def webp_to_mp4(self, input_path, output_path, fps=30):
+    def webp_to_mp4(self, input_path, output_path, fps=16, interpolation_factor=4):
         try:
+            # Load WebP animation
             webp = Image.open(input_path)
+            if not webp.is_animated:
+                raise ValueError("Input is not an animated WebP file")
+            
             width, height = webp.size
-            
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
-            
+            frames = []
+            for frame_idx in range(webp.n_frames):
+                webp.seek(frame_idx)
+                frame = cv2.cvtColor(np.array(webp), cv2.COLOR_RGB2BGR)
+                frames.append(frame)
+
+            # Write temporary AVI with interpolated frames
+            temp_output = "temp_output.avi"
+            fourcc = cv2.VideoWriter_fourcc(*'XVID')
+            out = cv2.VideoWriter(temp_output, fourcc, fps * interpolation_factor, (width, height))
+            if not out.isOpened():
+                raise RuntimeError("Failed to initialize VideoWriter")
+
             try:
-                while True:
-                    frame = cv2.cvtColor(np.array(webp), cv2.COLOR_RGB2BGR)
-                    out.write(frame)
-                    webp.seek(webp.tell() + 1)
-            except EOFError:
-                pass
+                prev_frame = frames[0]
+                out.write(prev_frame)
+                for next_frame in frames[1:]:
+                    # Interpolate between frames
+                    for i in range(1, interpolation_factor):
+                        alpha = i / interpolation_factor
+                        interpolated_frame = cv2.addWeighted(prev_frame, 1 - alpha, next_frame, alpha, 0)
+                        out.write(interpolated_frame)
+                    out.write(next_frame)
+                    prev_frame = next_frame
             finally:
                 out.release()
+
+            # Convert to MP4 with FFmpeg using hardcoded path
+            ffmpeg_path = r"C:\Program Files\ffmpeg\bin\ffmpeg.exe"  # Adjust if your path differs
+            subprocess.run([
+                ffmpeg_path, '-i', temp_output,
+                '-c:v', 'libx264', '-preset', 'medium', '-crf', '23',
+                '-c:a', 'aac', '-b:a', '128k', '-y',
+                output_path
+            ], check=True, capture_output=True, text=True)
+
+            # Clean up
+            if os.path.exists(temp_output):
+                os.remove(temp_output)
             return True
         except Exception as e:
             messagebox.showerror("Error", f"Error converting {os.path.basename(input_path)}: {str(e)}")
             return False
 
     def log_debug(self, message):
-        """Add message to debug window with timestamp"""
         from datetime import datetime
         timestamp = datetime.now().strftime("%H:%M:%S")
         self.debug_text.insert(tk.END, f"[{timestamp}] {message}\n")
@@ -141,13 +156,11 @@ class WebpToMP4Converter:
         self.root.update_idletasks()
 
     def toggle_pause(self):
-        """Toggle pause state"""
         self.paused = not self.paused
         self.pause_btn.configure(text="Resume" if self.paused else "Pause")
         self.log_debug("Conversion paused" if self.paused else "Conversion resumed")
 
     def stop_conversion(self):
-        """Stop the conversion process"""
         self.stopped = True
         self.log_debug("Stopping conversion...")
 
@@ -155,21 +168,17 @@ class WebpToMP4Converter:
         if not self.files:
             messagebox.showwarning("Warning", "No files selected!")
             return
-        
         if not self.output_folder:
             messagebox.showwarning("Warning", "No output folder selected!")
             return
         
-        # Reset flags
         self.stopped = False
         self.paused = False
         
-        # Update button states
         self.convert_btn.configure(state=tk.DISABLED)
         self.pause_btn.configure(state=tk.NORMAL, text="Pause")
         self.stop_btn.configure(state=tk.NORMAL)
         
-        # Start conversion in a separate thread
         self.conversion_thread = threading.Thread(target=self.convert_files, daemon=True)
         self.conversion_thread.start()
 
@@ -182,40 +191,30 @@ class WebpToMP4Converter:
                 if self.stopped:
                     self.log_debug("Conversion stopped by user")
                     break
-                
                 while self.paused:
                     if self.stopped:
                         break
                     self.root.update_idletasks()
                     continue
                 
-                # Update progress
                 progress = (i / total_files) * 100
                 self.progress_var.set(progress)
                 current_file = os.path.basename(input_file)
                 self.status_label.config(text=f"Converting: {current_file}")
                 self.log_debug(f"Starting conversion of {current_file}")
                 
-                # Create output path
-                output_file = os.path.join(
-                    self.output_folder,
-                    Path(input_file).stem + ".mp4"
-                )
+                output_file = os.path.join(self.output_folder, Path(input_file).stem + ".mp4")
                 
-                # Convert file
-                if self.webp_to_mp4(input_file, output_file, fps=16):
+                if self.webp_to_mp4(input_file, output_file):
                     successful += 1
                     self.log_debug(f"Successfully converted {current_file}")
                 else:
                     self.log_debug(f"Failed to convert {current_file}")
         
         finally:
-            # Reset button states
             self.convert_btn.configure(state=tk.NORMAL)
             self.pause_btn.configure(state=tk.DISABLED)
             self.stop_btn.configure(state=tk.DISABLED)
-            
-            # Update final progress
             self.progress_var.set(100)
             status = "Stopped" if self.stopped else "Completed"
             self.status_label.config(text=f"{status}! Successfully converted {successful}/{total_files} files.")
