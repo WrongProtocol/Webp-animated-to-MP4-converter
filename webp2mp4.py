@@ -96,7 +96,7 @@ class WebpToMP4Converter:
         if self.output_folder:
             self.status_label.config(text=f"Output folder: {self.output_folder}")
 
-    def webp_to_mp4(self, input_path, output_path, fps=16, interpolation_factor=4):
+    def webp_to_mp4(self, input_path, output_path, fps=16, interpolation_factor=3):
         try:
             # Load WebP animation
             webp = Image.open(input_path)
@@ -135,8 +135,8 @@ class WebpToMP4Converter:
             ffmpeg_path = r"C:\Program Files\ffmpeg\bin\ffmpeg.exe"  # Adjust if your path differs
             subprocess.run([
                 ffmpeg_path, '-i', temp_output,
-                '-c:v', 'libx264', '-preset', 'medium', '-crf', '23',
-                '-c:a', 'aac', '-b:a', '128k', '-y',
+                '-c:v', 'libx264', '-preset', 'slow', '-crf', '15',
+                '-c:a', 'aac', '-b:a', '128k', '-y', '-r', '30',
                 output_path
             ], check=True, capture_output=True, text=True)
 
